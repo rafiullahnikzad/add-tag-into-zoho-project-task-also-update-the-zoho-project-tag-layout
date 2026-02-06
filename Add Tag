@@ -1,0 +1,217 @@
+info "=== ADD TAG FROM LOCATION Custom Module Zoho Books ===";
+info "Task ID: " + task_id;
+info "Project ID: " + project_id;
+portal_id = "7#####2526";
+portal_name = "bairquality";
+// STEP 1: Get task details
+task_url = "https://projectsapi.zoho.com/restapi/portal/" + portal_name + "/projects/" + project_id + "/tasks/" + task_id + "/";
+task_response = invokeurl
+[
+url :task_url
+type :GET
+connection:"zoho_projects_conn"
+];
+location_url = "";
+if(task_response.containKey("tasks"))
+{
+task_list = task_response.get("tasks");
+if(task_list.size() > 0)
+{
+task_data = task_list.get(0);
+if(task_data.containKey("custom_fields"))
+{
+custom_fields = task_data.get("custom_fields");
+for each  field in custom_fields
+{
+if(field.get("column_name") == "UDF_CHAR1")
+{
+location_url = field.get("value");
+}
+}
+}
+}
+}
+if(location_url == null || location_url == "" || !location_url.contains("cm_location"))
+{
+info "No valid location URL found. Exiting.";
+}
+info "Location URL: " + location_url;
+// STEP 2: Extract IDs
+temp1 = location_url.getSuffix("/app/");
+books_org_id = temp1.getPrefix("#");
+location_id = location_url.getSuffix("cm_location/");
+// STEP 3: Fetch BAIR Region from Zoho Books
+books_url = "https://www.zohoapis.com/books/v3/cm_location/" + location_id + "?organization_id=" + books_org_id;
+location_response = invokeurl
+[
+url :books_url
+type :GET
+connection:"zoho_projects_conn"
+];
+bair_region = "";
+if(location_response.containKey("module_record_hash"))
+{
+location_record = location_response.get("module_record_hash");
+if(location_record.containKey("cf_bair_region"))
+{
+bair_region = location_record.get("cf_bair_region");
+}
+}
+if(bair_region == null || bair_region == "")
+{
+info "No BAIR Region found. Exiting.";
+}
+info "BAIR Region: " + bair_region;
+// STEP 4: Get existing tags
+get_tags_url = "https://projectsapi.zoho.com/api/v3/portal/" + portal_id + "/tags?range=200";
+tags_response = invokeurl
+[
+url :get_tags_url
+type :GET
+connection:"zoho_projects_conn"
+];
+tag_id = "";
+if(tags_response.containKey("tags"))
+{
+all_tags = tags_response.get("tags");
+for each  tag in all_tags
+{
+if(tag.get("name") == bair_region)
+{
+tag_id = tag.get("id");
+info "Found existing tag ID: " + tag_id;
+}
+}
+}
+// STEP 5: Create tag if doesn't exist - CORRECT FORMAT per documentation
+if(tag_id == "")
+{
+info "Tag not found. Creating: " + bair_region;
+create_tag_url = "https://projectsapi.zoho.com/api/v3/portal/" + portal_id + "/tags";
+// Per documentation: tags parameter must be JSON Array
+// Format: [{"name":"tagname","color_class":"bg-tag1"}]
+tags_json_array = "[{\"name\":\"" + bair_region + "\",\"color_class\":\"bg-tag1\"}]";
+create_params = Map();
+create_params.put("tags",tags_json_array);
+info "Request params: " + create_params;
+create_response = invokeurl
+[
+url :create_tag_url
+type :POST
+parameters:create_params
+connection:"zoho_projects_conn"
+];
+info "Create Response: " + create_response;
+if(create_response.containKey("tags"))
+{
+created_tags = create_response.get("tags");
+if(created_tags.size() > 0)
+{
+tag_id = created_tags.get(0).get("id");
+info "Created tag ID: " + tag_id;
+}
+}
+// If still no tag, fetch again
+if(tag_id == "")
+{
+info "Fetching tags again...";
+tags_response2 = invokeurl
+[
+url :get_tags_url
+type :GET
+connection:"zoho_projects_conn"
+];
+if(tags_response2.containKey("tags"))
+{
+all_tags2 = tags_response2.get("tags");
+for each  tag2 in all_tags2
+{
+if(tag2.get("name") == bair_region)
+{
+tag_id = tag2.get("id");
+info "Found tag ID: " + tag_id;
+}
+}
+}
+}
+}
+// STEP 6: Associate tag with task
+if(tag_id != "")
+{
+associate_url = "https://projectsapi.zoho.com/api/v3/portal/" + portal_id + "/projects/" + project_id + "/tags/associate?tag_id=" + tag_id + "&entity_id=" + task_id + "&entityType=5";
+associate_response = invokeurl
+[
+url :associate_url
+type :POST
+connection:"zoho_projects_conn"
+];
+info "SUCCESS: Tag '" + bair_region + "' added to task!";
+}
+else
+{
+info "ERROR: Could not create or find tag";
+}
+//below add the tag into project tag field to update it
+//
+
+if(tag_id != "" && tag_id != null)
+{
+    // --------------------------------------------
+    // BUILD THE PROJECT TAG ASSOCIATION URL
+    // --------------------------------------------
+    // API Endpoint: /tags/associate
+    // Parameters:
+    //   - tag_id: The tag to associate
+    //   - entity_id: The project ID (target)
+    //   - entityType: 2 = Project (5 = Task)
+    // --------------------------------------------
+   
+    project_tag_url = "https://projectsapi.zoho.com/api/v3/portal/" + portal_id + "/projects/" + project_id + "/tags/associate?tag_id=" + tag_id + "&entity_id=" + project_id + "&entityType=2";
+   
+    // --------------------------------------------
+    // LOG THE URL FOR DEBUGGING
+    // --------------------------------------------
+   
+    info "=== ADD TAG TO PROJECT ===";
+    info "Project ID: " + project_id;
+    info "Tag ID: " + tag_id;
+    info "Tag Name: " + bair_region;
+    info "Associate URL: " + project_tag_url;
+   
+    // --------------------------------------------
+    // MAKE THE API CALL TO ASSOCIATE TAG
+    // --------------------------------------------
+    // POST request to associate the tag with project
+    // Uses same connection as other API calls
+    // --------------------------------------------
+   
+    project_tag_response = invokeurl
+    [
+        url :project_tag_url
+        type :POST
+        connection:"zoho_projects_conn"
+    ];
+   
+    // --------------------------------------------
+    // LOG THE RESPONSE
+    // --------------------------------------------
+   
+    info "Project Tag Response: " + project_tag_response;
+    info "SUCCESS: Tag '" + bair_region + "' added to Project ID: " + project_id;
+}
+else
+{
+    // --------------------------------------------
+    // NO TAG ID AVAILABLE - LOG ERROR
+    // --------------------------------------------
+    // This happens if tag creation failed earlier
+    // or if no BAIR Region was found in location
+    // --------------------------------------------
+   
+    info "ERROR: Cannot add tag to project - no valid tag_id available";
+    info "Check if BAIR Region exists in the location record";
+}
+
+
+//
+return "";
